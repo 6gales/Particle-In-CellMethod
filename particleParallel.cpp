@@ -50,14 +50,14 @@ void initialize(Particle *particles, int rank, int size, size_t coef)
 void createType(MPI_Datatype *particleType)
 {
 	const int nitems = 4;
-	int blocklengths[] = { 2, 2, 1, 1 };
+	int blocklengths[] = { 1, 1, 1, 1 };
 	MPI_Datatype types[] = { MPI_FLOAT, MPI_FLOAT, MPI_SHORT, MPI_CHAR };
 	MPI_Aint offsets[4];
 
 	offsets[0] = offsetof(Particle, coord);
 	offsets[1] = offsetof(Particle, velocity);
 	offsets[2] = offsetof(Particle, mass);
-	offsets[2] = offsetof(Particle, charge);
+	offsets[3] = offsetof(Particle, charge);
 
 	MPI_Type_create_struct(nitems, blocklengths, offsets, types, particleType);
 	MPI_Type_commit(particleType);
