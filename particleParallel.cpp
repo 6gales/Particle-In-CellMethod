@@ -79,7 +79,7 @@ void printCoords(int rank, int size, Particle *particles, size_t coef,
 
 		for (size_t p = 0; p < N; p++)
 		{
-			printf("%f %f\n", allParts[p].coord[period], E(p * size + rank));
+			printf("%f %f\n", allParts[p].coord[period], E(allParts[p].coord[period]));
 		}
 
 		delete[] allParts;
