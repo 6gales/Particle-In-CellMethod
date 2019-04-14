@@ -70,7 +70,7 @@ void printCoords(int rank, int size, Particle *particles, size_t coef,
 	if (rank == 0)
 		allParts = new Particle[N];
 
-	MPI_Gather(particles, coef, particleType, allParts, N, particleType, 0, MPI_COMM_WORLD);
+	MPI_Gather(particles, coef, particleType, allParts, coef, particleType, 0, MPI_COMM_WORLD);
 
 	if (rank == 0)
 	{
@@ -79,7 +79,7 @@ void printCoords(int rank, int size, Particle *particles, size_t coef,
 
 		for (size_t p = 0; p < N; p++)
 		{
-			printf("%f %f\n", particles[p].coord[period], E(p * size + rank));
+			printf("%f %f\n", allParts[p].coord[period], E(p * size + rank));
 		}
 
 		delete[] allParts;
@@ -107,7 +107,7 @@ void printDens(int rank, int size, float *density, float *charge, ull *nums, siz
 		
 		for (size_t c = 0; c < CELLS_NUM; c++)
 		{
-			density[c] = sumCharge[c] / sumNums[c];
+			density[c] = sumCharge[c] / (sumNums[c] ? sumNums[c] : 1);
 			printf("%f\n", density[c]);
 		}
 
@@ -124,11 +124,10 @@ int main(int argc, char **argv)
 	MPI_Comm_rank(MPI_COMM_WORLD, &rank);
 
 	size_t coef = N / size;
-
+	
 	Particle *particles = new Particle[coef];
-
 	initialize(particles, rank, size, coef);
-
+	
 	MPI_Datatype particleType;
 	createType(&particleType);
 
@@ -136,7 +135,7 @@ int main(int argc, char **argv)
 	ull *nums = new ull[CELLS_NUM];
 	float *density = new float[2 * CELLS_NUM],
 		*charge = density + CELLS_NUM,
-		cellSize = (float)Lx / (CELLS_NUM - 1); //cell size
+		cellSize = (float)Lx / (CELLS_NUM - 1);
 
 	for (size_t ts = 0; ts < 50; ts++)
 	{
@@ -146,9 +145,9 @@ int main(int argc, char **argv)
 		{
 			density[c] = 0.0f;
 			nums[c] = 0;
-		}		
+		}
 
-		for (size_t p = 0; p < N; p++)
+		for (size_t p = 0; p < coef; p++)
 		{
 			particles[p].coord[period] = particles[p].coord[period ^ 1]
 				+ particles[p].velocity[period] * TIME_INTERVAL;
@@ -160,14 +159,10 @@ int main(int argc, char **argv)
 
 			size_t i = (index - (int)index > 0.5f ? index + 1 : index);
 
-			printf("pal%d\n", p);
-
 			charge[i] += (float)particles[p].charge;
 			nums[i]++;
 		}
 
-		
-		
 		printCoords(rank, size, particles, coef, particleType, ts, period);
 
 		printDens(rank, size, density, charge, nums, ts);

@@ -92,7 +92,7 @@ int main(int argc, char **argv)
 
 		for (size_t c = 0; c < CELLS_NUM; c++)
 		{
-			density[c] = charge[c] / nums[c];
+			density[c] = charge[c] / (nums[c] ? nums[c] : 1);
 			printf("%f\n", density[c]);
 		}
 	}
