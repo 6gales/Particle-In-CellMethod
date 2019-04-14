@@ -10,7 +10,7 @@
 #define Q(k) ((k) % 2 ? -1 : 1)
 #define M(k) ((k) % 2 ? 1 : 1836)
 
-#define E(x) sin(2.0 * PI /(Nx * (x)))
+#define E(x) sin(2.0 * PI / Nx * (x))
 
 struct Particle
 {
@@ -66,7 +66,7 @@ int main(int argc, char **argv)
 
 		for (size_t p = 0; p < N; p++)
 		{
-			float fi = particles[p].coord / cellSize - 1.0f;
+			float fi = particles[p].coord / cellSize;
 			int i = (int)fi;
 			float rem = fi - i;
 
@@ -103,7 +103,7 @@ int main(int argc, char **argv)
 		float QE = 1.602e-19;
 		for (size_t p = 0; p < N; p++)
 		{
-			float fi = particles[p].coord / cellSize - 1.0f;
+			float fi = particles[p].coord / cellSize;
 			int i = (int)fi;
 			float rem = fi - i;
 
