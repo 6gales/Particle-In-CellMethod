@@ -50,7 +50,7 @@ void initialize(Particle *particles, int rank, int size, size_t coef)
 void createType(MPI_Datatype *particleType)
 {
 	const int nitems = 4;
-	int blocklengths[] = { 1, 1, 1, 1 };
+	int blocklengths[] = { 2, 2, 1, 1 };
 	MPI_Datatype types[] = { MPI_FLOAT, MPI_FLOAT, MPI_SHORT, MPI_CHAR };
 	MPI_Aint offsets[4];
 
@@ -146,7 +146,7 @@ int main(int argc, char **argv)
 		{
 			density[c] = 0.0f;
 			nums[c] = 0;
-		}
+		}		
 
 		for (size_t p = 0; p < N; p++)
 		{
@@ -160,10 +160,14 @@ int main(int argc, char **argv)
 
 			size_t i = (index - (int)index > 0.5f ? index + 1 : index);
 
+			printf("pal%d\n", p);
+
 			charge[i] += (float)particles[p].charge;
 			nums[i]++;
 		}
 
+		
+		
 		printCoords(rank, size, particles, coef, particleType, ts, period);
 
 		printDens(rank, size, density, charge, nums, ts);
