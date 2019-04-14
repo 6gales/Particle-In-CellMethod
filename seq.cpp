@@ -15,6 +15,9 @@
 
 #define E(x) sin(2.0f * PI / CELLS_NUM * (x))
 
+#define INITIAL_VELOCITY 0.0f
+#define TIME_INTERVAL 0.01f
+
 struct Particle
 {
 	float coord[2],
@@ -34,8 +37,8 @@ void initialize(Particle *particles)
 	{
 		particles[i].coord[0] = distributionFunction(i);
 		particles[i].coord[1] = particles[i].coord[0];
-		particles[i].velocity[0] = 0.0f;
-		particles[i].velocity[1] = 0.0f;
+		particles[i].velocity[0] = INITIAL_VELOCITY;
+		particles[i].velocity[1] = INITIAL_VELOCITY;
 		particles[i].mass = M(i);
 		particles[i].charge = Q(i);
 	}
@@ -51,9 +54,8 @@ int main(int argc, char **argv)
 	size_t *nums = new size_t[CELLS_NUM];
 	float *density = new float[2 * CELLS_NUM],
 		*charge = density + CELLS_NUM,
-		cellSize = (float)Lx / (CELLS_NUM - 1), //cell size
-		dt = 0.01f; //time interval	
-
+		cellSize = (float)Lx / (CELLS_NUM - 1); //cell size
+		
 	for (size_t ts = 0; ts < 50; ts++)
 	{
 		period ^= 1;
@@ -70,7 +72,7 @@ int main(int argc, char **argv)
 		for (size_t p = 0; p < N; p++)
 		{
 			particles[p].coord[period] = particles[p].coord[period ^ 1]
-				+ particles[p].velocity[period] * dt;
+				+ particles[p].velocity[period] * TIME_INTERVAL;
 
 			particles[p].velocity[period] = particles[p].velocity[period ^ 1]
 				+ 2.0f * particles[p].charge * E(particles[p].coord[period]) / particles[p].mass;
