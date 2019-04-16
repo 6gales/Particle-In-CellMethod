@@ -18,6 +18,7 @@
 
 #define INITIAL_VELOCITY 0.0f
 #define TIME_INTERVAL 0.01f
+#define TIME_STEPS 50
 
 typedef unsigned long long ull;
 
@@ -137,7 +138,7 @@ int main(int argc, char **argv)
 		*charge = density + CELLS_NUM,
 		cellSize = (float)Lx / (CELLS_NUM - 1);
 
-	for (size_t ts = 0; ts < 50; ts++)
+	for (size_t ts = 0; ts < TIME_STEPS; ts++)
 	{
 		period ^= 1;
 

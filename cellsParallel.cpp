@@ -7,7 +7,7 @@
 
 #define N 1000000 //particles
 #define Lx 100 //length
-#define CELLS_NUM 10000 //cells
+#define CELLS_NUM 10001 //cells
 
 #define PI 3.14159265358979323846f
 
@@ -18,6 +18,7 @@
 
 #define INITIAL_VELOCITY 0.0f
 #define TIME_INTERVAL 0.01f
+#define TIME_STEPS 50
 
 typedef unsigned long long ull;
 
@@ -60,6 +61,197 @@ ull initialize(Particle *particles, float lower, float upper)
 	return current;
 }
 
+struct ProcessInfo
+{
+	const int rank,
+		size;
+	
+	size_t coef;
+
+	float *density,
+		*charge,
+		lower,
+		upper,
+		cellSize;
+
+	Particle *particles,
+		*sendRight,
+		*sendLeft;
+
+	char period = 1;
+	
+	ull *nums,
+		particleNum,
+		firstNull,
+		sRSize,
+		sLSize;
+
+	ProcessInfo(int r, int s) : rank{ r }, size{ s }
+	{
+		coef = (CELLS_NUM - 1) / size;
+
+		nums = new ull[coef];
+
+		density = new float[2 * (coef + (rank == size - 1))];
+		charge = density + coef;
+
+		particles = new Particle[3 * N];
+		sendRight = particles + N;
+		sendLeft = sendRight + N;
+
+		cellSize = (float)Lx / CELLS_NUM;
+		lower = rank * coef * cellSize;
+		upper = (rank + 1) * coef * cellSize;
+
+		particleNum = initialize(particles, lower, upper);
+		firstNull = particleNum;
+		sRSize = 0ull;
+		sLSize = 0ull;
+	}
+
+	~ProcessInfo()
+	{
+		delete[] nums;
+		delete[] density;
+		delete[] particles;
+	}
+
+	void newIteration()
+	{
+		sRSize = 0;
+		sLSize = 0;
+		period ^= 1;
+
+		for (size_t c = 0; c < coef; c++)
+		{
+			density[c] = 0.0f;
+			nums[c] = 0;
+		}
+	}
+
+	void moveParticle(ull p)
+	{
+		particles[p].coord[period] = particles[p].coord[period ^ 1]
+			+ particles[p].velocity[period] * TIME_INTERVAL;
+
+		particles[p].velocity[period] = particles[p].velocity[period ^ 1]
+			+ 2.0f * particles[p].charge * E(particles[p].coord[period]) / particles[p].mass;
+	}
+
+	void sumCharge(float coord, char pcharge)
+	{
+		float index = coord / cellSize;
+
+		size_t i = static_cast<size_t>(index) + (index - (int)index > 0.5f);
+		i -= rank * coef;
+
+		if (i >= coef) i--;
+
+		charge[i] += (float)pcharge;
+		nums[i]++;
+	}
+
+	char isInBorders(ull p)
+	{
+		return (particles[p].coord[period] >= lower) - (particles[p].coord[period] < upper);
+	}
+
+	void checkNullAndNum(ull p)
+	{
+		if (firstNull > p)
+			firstNull = p;
+
+		if (p == particleNum - 1)
+		{
+			while (!particles[particleNum].mass && particleNum)
+			{
+				particleNum--;
+			}
+			particleNum++;
+		}
+	}
+
+	void writeRight(ull p)
+	{
+		sendRight[sRSize++] = particles[p];
+		particles[p].mass = 0;
+
+		checkNullAndNum(p);
+	}
+
+	void writeLeft(ull p)
+	{
+		sendLeft[sLSize++] = particles[p];
+		particles[p].mass = 0;
+
+		checkNullAndNum(p);
+	}
+
+	void placeParticles(Particle *rBuf, ull rSize)
+	{
+		for (size_t i = 0; i < rSize; i++)
+		{
+			sumCharge(rBuf[i].coord[period], rBuf[i].charge);
+		}
+
+		for (size_t i = 0; i < rSize; i++)
+		{
+			while (particles[firstNull].mass)
+			{
+				firstNull++;
+			}
+			particles[firstNull++] = rBuf[i];
+		}
+		if (firstNull > particleNum)
+			particleNum = firstNull;
+	}
+
+	void exchangeParticles(MPI_Datatype particleType)
+	{
+		ull rRSize,
+			rLSize;
+
+		MPI_Status stat[4];
+		MPI_Request req[4];
+
+		MPI_Isend(&sRSize, 1, MPI_UNSIGNED_LONG_LONG, (rank + 1) % size, 4, MPI_COMM_WORLD, req);
+		MPI_Isend(&sLSize, 1, MPI_UNSIGNED_LONG_LONG, (rank - 1 + size) % size, 7, MPI_COMM_WORLD, req + 1);
+
+		MPI_Irecv(&rRSize, 1, MPI_UNSIGNED_LONG_LONG, (rank + 1) % size, 7, MPI_COMM_WORLD, req + 2);
+		MPI_Irecv(&rLSize, 1, MPI_UNSIGNED_LONG_LONG, (rank - 1 + size) % size, 4, MPI_COMM_WORLD, req + 3);
+		MPI_Waitall(4, req, stat);
+
+		Particle *rRBuf = new Particle[static_cast<unsigned>(rRSize + rLSize)],
+			*rLBuf = rRBuf + rRSize;
+
+		MPI_Isend(sendRight, static_cast<int>(sRSize), particleType,
+			(rank + 1) % size, 141, MPI_COMM_WORLD, req);
+
+		MPI_Isend(sendLeft, static_cast<int>(sLSize), particleType,
+			(rank - 1 + size) % size, 171, MPI_COMM_WORLD, req + 1);
+
+		MPI_Irecv(rRBuf, static_cast<int>(rRSize), particleType,
+			(rank + 1) % size, 171, MPI_COMM_WORLD, req + 2);
+
+		MPI_Irecv(rLBuf, static_cast<int>(rLSize), particleType,
+			(rank - 1 + size) % size, 141, MPI_COMM_WORLD, req + 3);
+
+		MPI_Waitall(4, req, stat);
+
+		placeParticles(rRBuf, rRSize + rLSize);
+
+		delete[] rRBuf;
+	}
+
+	void calculateDensity()
+	{
+		for (size_t c = 0; c < coef; c++)
+		{
+			density[c] = charge[c] / (nums[c] ? nums[c] : 1);
+		}
+	}
+};
+
 void createType(MPI_Datatype *particleType)
 {
 	const int nitems = 4;
@@ -76,108 +268,24 @@ void createType(MPI_Datatype *particleType)
 	MPI_Type_commit(particleType);
 }
 
-void checkNullAndNum(ull p, ull &firstNull, ull &particleNum, Particle *particles)
-{
-	if (firstNull > p)
-		firstNull = p;
-
-	if (p == particleNum - 1)
-	{
-		while (!particles[particleNum].mass)
-		{
-			particleNum--;
-		}
-		particleNum++;
-	}
-}
-
-void sumCharge(int rank, size_t coef, float cellSize, float coord, char pcharge,
-	float *charge, ull *nums)
-{
-	float index = coord / cellSize;
-
-	size_t i = static_cast<size_t>(index) + (index - (int)index > 0.5f);
-	i -= rank * coef;
-	charge[i] += (float)pcharge;
-	nums[i]++;
-}
-
-Particle *exchangeBorders(int rank, int size, ull sRSize, ull sLSize, MPI_Datatype particleType,
-	Particle *sendRight, Particle *sendLeft, ull &rRSize, ull &rLSize)
-{
-	MPI_Status stat[2];
-	MPI_Request sreq[2], rreq[2];
-
-	MPI_Isend(&sRSize, 1, MPI_UNSIGNED_LONG_LONG, (rank + 1) % size, 4, MPI_COMM_WORLD, &sreq[0]);
-	MPI_Isend(&sLSize, 1, MPI_UNSIGNED_LONG_LONG, (rank - 1 + size) % size, 7, MPI_COMM_WORLD, &sreq[1]);
-
-	MPI_Irecv(&rRSize, 1, MPI_UNSIGNED_LONG_LONG, (rank + 1) % size, 7, MPI_COMM_WORLD, &rreq[0]);
-	MPI_Irecv(&rLSize, 1, MPI_UNSIGNED_LONG_LONG, (rank - 1 + size) % size, 4, MPI_COMM_WORLD, &rreq[1]);
-	MPI_Waitall(2, rreq, stat);
-
-	Particle *rRBuf = new Particle[static_cast<unsigned>(rRSize + rLSize)],
-		*rLBuf = rRBuf + rRSize;
-
-	MPI_Isend(sendRight, static_cast<int>(sRSize), particleType,
-		(rank + 1) % size, 141, MPI_COMM_WORLD, sreq);
-
-	MPI_Isend(sendRight, static_cast<int>(sRSize), particleType,
-		(rank - 1 + size) % size, 171, MPI_COMM_WORLD, sreq + 1);
-
-	MPI_Irecv(rRBuf, static_cast<int>(rRSize), particleType,
-		(rank + 1) % size, 171, MPI_COMM_WORLD, rreq);
-
-	MPI_Irecv(rLBuf, static_cast<int>(rLSize), particleType,
-		(rank - 1 + size) % size, 141, MPI_COMM_WORLD, rreq + 1);
-
-	MPI_Waitall(2, rreq, stat);
-
-	return rRBuf;
-}
-
-void assignBorders(Particle *particles, ull &firstNull, ull &particleNum,
-	Particle *rBuf, ull rSize, int rank, size_t coef,
-	float *charge, ull *nums, float cellSize, char period)
-{
-	for (size_t i = 0; i < rSize; i++)
-	{
-		sumCharge(rank, coef, cellSize, rBuf[i].coord[period], rBuf[i].charge, charge, nums);
-	}
-
-	for (size_t i = 0; i < rSize; i++)
-	{
-		while (particles[firstNull].mass)
-		{
-			firstNull++;
-		}
-		particles[firstNull++] = rBuf[i];
-	}
-	if (firstNull > particleNum)
-		particleNum = firstNull;
-
-	delete[] rBuf;
-}
-
-void printCoords(int rank, int size, Particle *particles, size_t coef,
-	MPI_Datatype particleType, size_t ts, char period, ull particleNum)
+void printCoords(ProcessInfo &pinfo, MPI_Datatype particleType, size_t ts)
 {
 	int *displs = nullptr,
 		*rcounts = nullptr;
 
-	if (rank == 0)
+	if (pinfo.rank == 0)
 	{
-		displs = new int[size * 2];
-		rcounts = displs + size;
+		displs = new int[pinfo.size * 2];
+		rcounts = displs + pinfo.size;
 	}
 
-	ull count = 0;
-
-	int toSend = static_cast<int>(particleNum);
+	int toSend = static_cast<int>(pinfo.particleNum);
 	MPI_Gather(&toSend, 1, MPI_INT, rcounts, 1, MPI_INT, 0, MPI_COMM_WORLD);
 
-	if (rank == 0)
+	ull count = 0;
+	if (pinfo.rank == 0)
 	{
-		for (int i = 0; i < size; i++)
+		for (int i = 0; i < pinfo.size; i++)
 		{
 			displs[i] = static_cast<int>(count);
 			count += rcounts[i];
@@ -185,13 +293,13 @@ void printCoords(int rank, int size, Particle *particles, size_t coef,
 	}
 
 	Particle *allParts = nullptr;
-	if (rank == 0)
+	if (pinfo.rank == 0)
 		allParts = new Particle[static_cast<unsigned>(count)];
 
-	MPI_Gatherv(particles, static_cast<int>(particleNum), particleType,
+	MPI_Gatherv(pinfo.particles, static_cast<int>(pinfo.particleNum), particleType,
 		allParts, rcounts, displs, particleType, 0, MPI_COMM_WORLD);
 
-	if (rank == 0)
+	if (pinfo.rank == 0)
 	{
 		std::string coordfile = "coord" + std::to_string(ts);
 		freopen(coordfile.c_str(), "w", stdout);
@@ -199,7 +307,8 @@ void printCoords(int rank, int size, Particle *particles, size_t coef,
 		for (size_t p = 0; p < count; p++)
 		{
 			if (allParts[p].mass)
-				printf("%f %f\n", allParts[p].coord[period], E(allParts[p].coord[period]));
+				printf("%f %f\n", allParts[p].coord[pinfo.period],
+					E(allParts[p].coord[pinfo.period]));
 		}
 
 		delete[] displs;
@@ -207,19 +316,28 @@ void printCoords(int rank, int size, Particle *particles, size_t coef,
 	}
 }
 
-void printDens(int rank, int size, float *density, size_t coef, size_t ts)
+void printDens(ProcessInfo &pinfo, size_t ts)
 {
 	float *allDensity = nullptr;
 
-	if (rank == 0)
+	if (pinfo.rank == 0)
 	{
 		allDensity = new float[CELLS_NUM];
 	}
 
-	MPI_Gather(density, coef, MPI_FLOAT, allDensity, coef, MPI_FLOAT, 0, MPI_COMM_WORLD);
+	MPI_Gather(pinfo.density, pinfo.coef, MPI_FLOAT,
+		allDensity, pinfo.coef, MPI_FLOAT, 0, MPI_COMM_WORLD);
 	
-	if (rank == 0)
+	if (pinfo.rank == pinfo.size - 1)
 	{
+		MPI_Send(pinfo.density + pinfo.coef, 1, MPI_FLOAT, 0, 504, MPI_COMM_WORLD);
+	}
+
+	if (pinfo.rank == 0)
+	{
+		MPI_Recv(allDensity + CELLS_NUM - 1, 1, MPI_FLOAT, pinfo.size - 1, 504,
+			MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+
 		std::string densfile = "dens" + std::to_string(ts);
 		freopen(densfile.c_str(), "w", stdout);
 
@@ -239,94 +357,43 @@ int main(int argc, char **argv)
 	MPI_Comm_size(MPI_COMM_WORLD, &size);
 	MPI_Comm_rank(MPI_COMM_WORLD, &rank);
 
-	size_t coef = CELLS_NUM / size;
-
-	float cellSize = (float)Lx / (CELLS_NUM - 1),
-		lower = rank * coef * cellSize,
-		upper = (rank + 1) * coef * cellSize;
-
-	Particle *particles = new Particle[N],
-		*sendRight = new Particle[2 * N],
-		*sendLeft = sendRight + N;
-
-	ull particleNum = initialize(particles, lower, upper),
-		firstNull = particleNum,
-		sRSize = 0,
-		sLSize = 0;
+	ProcessInfo pinfo{ rank, size };
 
 	MPI_Datatype particleType;
 	createType(&particleType);
 
-	char period = 1;
-	ull *nums = new ull[coef];
-	float *density = new float[2 * coef],
-		*charge = density + coef;
-
-	for (size_t ts = 0; ts < 1; ts++)
+	for (size_t ts = 0; ts < TIME_STEPS; ts++)
 	{
-		sRSize = 0;
-		sLSize = 0;
-		period ^= 1;
+		pinfo.newIteration();
 
-		for (size_t c = 0; c < coef; c++)
+		for (ull p = 0; p < pinfo.particleNum; p++)
 		{
-			density[c] = 0.0f;
-			nums[c] = 0;
+			pinfo.moveParticle(p);
+
+			switch (pinfo.isInBorders(p))
+			{
+			case 0:
+				pinfo.sumCharge(pinfo.particles[p].coord[pinfo.period], pinfo.particles[p].charge);
+				break;
+
+			case 1:
+				pinfo.writeRight(p);
+				break;
+
+			default:
+				pinfo.writeLeft(p);
+			}
+			
 		}
 
-		for (ull p = 0; p < particleNum; p++)
-		{
-			particles[p].coord[period] = particles[p].coord[period ^ 1]
-				+ particles[p].velocity[period] * TIME_INTERVAL;
+		pinfo.exchangeParticles(particleType);
 
-			particles[p].velocity[period] = particles[p].velocity[period ^ 1]
-				+ 2.0f * particles[p].charge * E(particles[p].coord[period]) / particles[p].mass;
+		printCoords(pinfo, particleType, ts);
 
-			if (particles[p].coord[period] >= lower && particles[p].coord[period] < upper)
-			{
-				//BUG HERE
-//				sumCharge(rank, coef, cellSize, particles[p].coord[period],
-//					particles[p].charge, charge, nums);
-			}
-			else if (particles[p].coord[period] >= upper)
-			{
-				printf("#%d :right! coord %f\n", rank, particles[p].coord[period]);
-				sendRight[sRSize++] = particles[p];
-				particles[p].mass = 0;
+		pinfo.calculateDensity();
 
-				checkNullAndNum(p, firstNull, particleNum, particles);
-			}
-			else
-			{
-				printf("#%d :left! coord %f\n", rank, particles[p].coord[period]);
-				sendLeft[sLSize++] = particles[p];
-				particles[p].mass = 0;
-
-				checkNullAndNum(p, firstNull, particleNum, particles);
-			}
-		}
-
-		ull rRSize, rLSize;
-		Particle *rBuf = exchangeBorders(rank, size, sRSize, sLSize, particleType,
-			sendRight, sendLeft, rRSize, rLSize);
-
-		assignBorders(particles, firstNull, particleNum, rBuf, rRSize + rLSize,
-			rank, coef, charge, nums, cellSize, period);
-
-		printCoords(rank, size, particles, coef, particleType, ts, period, particleNum);
-
-		for (size_t c = 0; c < coef; c++)
-		{
-			density[c] = charge[c] / (nums[c] ? nums[c] : 1);
-		}
-
-		printDens(rank, size, density, coef, ts);
+		printDens(pinfo, ts);
 	}
-
-	delete[] sendRight;
-	delete[] nums;
-	delete[] density;
-	delete[] particles;
 
 	MPI_Finalize();
 	return 0;
