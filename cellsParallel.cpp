@@ -4,8 +4,9 @@
 #include <string>
 #include <math.h>
 #include <mpi.h>
+#include <sys/time.h>
 
-#define N 1000000 //particles
+#define N 100000000 //particles
 #define Lx 100 //length
 #define CELLS_NUM 10001 //cells
 
@@ -20,6 +21,21 @@
 #define TIME_INTERVAL 0.01f
 #define TIME_STEPS 50
 
+#ifdef TIME_TEST
+struct timeval tv1, tv2, dtv;
+struct timezone tz;
+
+void time_start() { gettimeofday(&tv1, &tz); }
+
+long time_stop() {
+	gettimeofday(&tv2, &tz);
+	dtv.tv_sec = tv2.tv_sec - tv1.tv_sec;
+	dtv.tv_usec = tv2.tv_usec - tv1.tv_usec;
+	if (dtv.tv_usec < 0) { dtv.tv_sec--; dtv.tv_usec += 1000000; }
+	return dtv.tv_sec * 1000 + dtv.tv_usec / 1000;
+}
+#endif
+
 typedef unsigned long long ull;
 
 struct Particle
@@ -32,7 +48,7 @@ struct Particle
 
 float distributionFunction(ull particleNumber)
 {
-	return (float)particleNumber * Lx / (float)N;
+	return (float)particleNumber * Lx*0.95 / (float)N;
 }
 
 ull initialize(Particle *particles, float lower, float upper)
@@ -52,7 +68,7 @@ ull initialize(Particle *particles, float lower, float upper)
 			current++;
 		}
 	}
-	
+
 	for (ull i = current; i < N; i++)
 	{
 		particles[i].mass = 0;
@@ -65,7 +81,7 @@ struct ProcessInfo
 {
 	const int rank,
 		size;
-	
+
 	size_t coef;
 
 	float *density,
@@ -79,7 +95,7 @@ struct ProcessInfo
 		*sendLeft;
 
 	char period = 1;
-	
+
 	ull *nums,
 		particleNum,
 		firstNull,
@@ -327,7 +343,7 @@ void printDens(ProcessInfo &pinfo, size_t ts)
 
 	MPI_Gather(pinfo.density, pinfo.coef, MPI_FLOAT,
 		allDensity, pinfo.coef, MPI_FLOAT, 0, MPI_COMM_WORLD);
-	
+
 	if (pinfo.rank == pinfo.size - 1)
 	{
 		MPI_Send(pinfo.density + pinfo.coef, 1, MPI_FLOAT, 0, 504, MPI_COMM_WORLD);
@@ -358,9 +374,12 @@ int main(int argc, char **argv)
 	MPI_Comm_rank(MPI_COMM_WORLD, &rank);
 
 	ProcessInfo pinfo{ rank, size };
-
 	MPI_Datatype particleType;
 	createType(&particleType);
+
+#ifdef TIME_TEST
+	time_start();
+#endif
 
 	for (size_t ts = 0; ts < TIME_STEPS; ts++)
 	{
@@ -383,17 +402,28 @@ int main(int argc, char **argv)
 			default:
 				pinfo.writeLeft(p);
 			}
-			
+
 		}
 
 		pinfo.exchangeParticles(particleType);
 
+#ifndef TIME_TEST
 		printCoords(pinfo, particleType, ts);
+#endif
 
 		pinfo.calculateDensity();
 
+#ifndef TIME_TEST
 		printDens(pinfo, ts);
+#endif
 	}
+
+#ifdef TIME_TEST
+	if (rank == 0) {
+		double ms = time_stop();
+		std::cout << "time: " << ms / 1000.0 << std::endl;
+	}
+#endif
 
 	MPI_Finalize();
 	return 0;

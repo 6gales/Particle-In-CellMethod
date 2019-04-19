@@ -5,7 +5,11 @@
 #include <math.h>
 #include <mpi.h>
 
-#define N 1000000 //particles
+#ifdef TIME_TEST
+#include <sys/time.h>
+#endif
+
+#define N 100000000 //particles
 #define Lx 100 //length
 #define CELLS_NUM 10000 //cells
 
@@ -19,6 +23,21 @@
 #define INITIAL_VELOCITY 0.0f
 #define TIME_INTERVAL 0.01f
 #define TIME_STEPS 50
+
+#ifdef TIME_TEST
+struct timeval tv1, tv2, dtv;
+struct timezone tz;
+
+void time_start() { gettimeofday(&tv1, &tz); }
+
+long time_stop() {
+	gettimeofday(&tv2, &tz);
+	dtv.tv_sec = tv2.tv_sec - tv1.tv_sec;
+	dtv.tv_usec = tv2.tv_usec - tv1.tv_usec;
+	if (dtv.tv_usec < 0) { dtv.tv_sec--; dtv.tv_usec += 1000000; }
+	return dtv.tv_sec * 1000 + dtv.tv_usec / 1000;
+}
+#endif
 
 typedef unsigned long long ull;
 
@@ -103,13 +122,16 @@ void printDens(int rank, int size, float *density, float *charge, ull *nums, siz
 
 	if (rank == 0)
 	{
+#ifndef TIME_TEST
 		std::string densfile = "dens" + std::to_string(ts);
 		freopen(densfile.c_str(), "w", stdout);
-		
+#endif // !TIME_TEST	
 		for (size_t c = 0; c < CELLS_NUM; c++)
 		{
 			density[c] = sumCharge[c] / (sumNums[c] ? sumNums[c] : 1);
+#ifndef TIME_TEST
 			printf("%f\n", density[c]);
+#endif
 		}
 
 		delete[] sumCharge;
@@ -137,6 +159,9 @@ int main(int argc, char **argv)
 	float *density = new float[2 * CELLS_NUM],
 		*charge = density + CELLS_NUM,
 		cellSize = (float)Lx / (CELLS_NUM - 1);
+#ifdef TIME_TEST
+	time_start();
+#endif // TIME_TEST
 
 	for (size_t ts = 0; ts < TIME_STEPS; ts++)
 	{
@@ -163,11 +188,18 @@ int main(int argc, char **argv)
 			charge[i] += (float)particles[p].charge;
 			nums[i]++;
 		}
-
+#ifndef TIME_TEST
 		printCoords(rank, size, particles, coef, particleType, ts, period);
+#endif
 
 		printDens(rank, size, density, charge, nums, ts);
 	}
+#ifdef TIME_TEST
+	if (rank == 0) {
+		double ms = time_stop();
+		std::cout <<"time: " << ms / 1000.0 << std::endl;
+	}
+#endif
 
 	delete[] nums;
 	delete[] density;
